@@ -1,0 +1,36 @@
+<?php if ( ! defined('BASEPATH')) exit('No direct script access allowed');
+
+class Group_Model extends CI_Model {
+	
+	public function get() {
+		return $this->db->get('m_group')->result();
+	}
+	
+	public function getById($id) {
+		return $this->db->get_where('m_group', array('group_code' => $id))->result();
+	}
+	
+	public function getByGroupUser() {
+		return $this->db->query("select group_code from m_group where is_user=1 limit 1")->row()->group_code;
+	}
+	
+	public function isGroupUser($id) {
+		return $this->db->query("select count(1) as c1 from m_group where is_user=1 and group_code='$id'")->row()->c1;
+	}
+	
+	private function getMaxId() {
+		$query=$this->db->query("select IFNULL(MAX(cast(MID(group_code,2,length(group_code)-1) as unsigned)),0)+1 as mx from m_group");
+		$mx = intval($query->row()->mx)+100;
+		return 'G'.substr(strval($mx),1);
+	}
+	
+	public function add($group) {
+		$group['group_code']=$this->getMaxId();
+		return $this->db->insert('m_group', $group);
+	}
+	
+	public function edit($group,$id) {
+		$this->db->where('group_code',$id);
+		return $this->db->update('m_group', $group);
+	}
+}

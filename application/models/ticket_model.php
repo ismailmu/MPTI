@@ -1,0 +1,116 @@
+<?php if ( ! defined('BASEPATH')) exit('No direct script access allowed');
+
+class Ticket_Model extends CI_Model {
+	
+	public function getByCriteria($id,$user) {
+		$get="select t.*,mt.type_name,ts.status_code,ts.desc_status,s.status_name,u.*
+		,t.hardware_code,mh.hardware_name from t_ticket t join t_ticket_status ts on t.ticket_code=ts.ticket_code 
+		join (select max(id) maxId from t_ticket_status group by ticket_code) maxT on maxT.maxId=ts.id 
+		join m_status s on s.status_code = ts.status_code join m_user u on u.user_code=t.created_by 
+		join m_branch b on b.branch_code = u.branch_code join m_group_status gs on ts.status_code = gs.status_code and gs.action='view' 
+		left join m_type mt on mt.type_code = t.type_code left join m_hardware mh on mh.hardware_code = t.hardware_code ";
+		$this->load->model('group_model','tblGroup');
+		if ($this->tblGroup->isGroupUser($id) >= 1) {
+			$get.="where t.created_by='$user' and gs.group_code='$id'";
+		}else {
+			$get.="where gs.group_code='$id'";
+		}
+		$get.=" order by t.date_open";
+		return $this->db->query($get)->result();
+	}
+	
+	public function getById($id) {
+		$get="select t.*,mt.type_name,ts.status_code,ts.desc_status,s.status_name,u.*,b.branch_name
+		,t.hardware_code,mh.hardware_name from t_ticket t join t_ticket_status ts on t.ticket_code=ts.ticket_code 
+		join (select max(id) maxId from t_ticket_status group by ticket_code) maxT on maxT.maxId=ts.id 
+		join m_status s on s.status_code = ts.status_code join m_user u on u.user_code=t.created_by 
+		join m_branch b on b.branch_code = u.branch_code join m_group_status gs on ts.status_code = gs.status_code and gs.action='view' 
+		left join m_type mt on mt.type_code = t.type_code left join m_hardware mh on mh.hardware_code = t.hardware_code 
+		where t.ticket_code='$id'";
+		return $this->db->query($get)->result();
+	}
+	
+	private function getMaxId() {
+		$query=$this->db->query("select IFNULL(MAX(cast(MID(ticket_code,3) as unsigned)),0) as mx from t_ticket");
+		$mx = intval($query->row()->mx)+1;
+		return 'TK'.strval($mx);
+	}
+	
+	public function add($ticket,$status,$desc) {
+		$this->db->trans_start();
+		$id=$this->getMaxId();
+		$ticket['ticket_code']=$id;
+		$ticketStatus['ticket_code']=$id;
+		$ticketStatus['status_code']=$status;
+		$ticketStatus['desc_status']=$desc;
+		$ticketStatus['created_by']=$ticket['created_by'];
+		$this->db->insert('t_ticket', $ticket);
+		$this->addTicketStatus($ticketStatus);
+		$this->db->trans_complete();
+		return $this->db->trans_status();
+	}
+	
+	public function edit($ticket,$id,$status,$desc,$user,$hw) {
+		$this->db->trans_start();
+		$dataLast=$this->getMaxTicketStatus($id);
+		if ($status != $dataLast->status_code) { //insert
+			$ticketStatus['ticket_code']=$id;
+			$ticketStatus['status_code']=$status;
+			$ticketStatus['desc_status']=$desc;
+			$ticketStatus['created_by']=$user;
+			$this->addTicketStatus($ticketStatus);
+		}else { //update
+			$data['dataFrom']= array(
+	           'ticket_code' => $id,
+	           'status_code' => $status,
+	           'desc_status' => $desc,
+	           'modified_by' => $user,
+	           'modified_date' => date("Y-m-d H:i:s")
+	        );
+			$this->db->where('id',$dataLast->id);
+			$this->db->update('t_ticket_status', $data['dataFrom']);
+		}
+		
+		if ( $status == 'ST04' && $hw !="" ) {
+			$this->updateHardware($hw,$user,'OUT');
+		}
+		
+		if ( $status == 'ST05' && $hw !="" ) {
+			$this->updateHardware($hw,$user,'IN');
+		}
+		if ($ticket != null) {
+			$this->db->where('ticket_code',$id);
+			$this->db->update('t_ticket', $ticket);
+		}
+		$this->db->trans_complete();
+		return $this->db->trans_status();
+	}
+	
+	private function updateHardware($hw,$user,$status) {
+		//echo $ticket;
+		$this->load->model('hardware_model','tblHw');
+		$hardware['status']= $status;
+		$hardware['modified_by']=$user;
+		$hardware['modified_date']=date("Y-m-d H:i:s");
+		$this->tblHw->edit($hardware,$hw);
+	}
+	
+	private function addTicketStatus($ticketStatus) {
+		return $this->db->insert('t_ticket_status', $ticketStatus);
+	}
+	
+	public function getTicketStatusByGroup($group) {
+		return $this->db->query("select gs.group_code,s.status_code,s.status_name from m_group_status gs 
+		join m_status s on gs.status_code = s.status_code where gs.group_code='$group' and gs.action='save';")->result();
+	}
+	
+	private function getMaxTicketStatus($id) {
+		return $this->db->query("select status_code,id from t_ticket_status 
+		where ticket_code='$id' order by id desc limit 1")->row();
+	}
+	
+	public function getIsAllowTicket($user,$action) {
+		return $this->db->query("select count(1) c1 from m_group_status gs join m_user u on gs.group_code=u.group_code where user_code='$user'
+		and action='$action' and status_code='ST01';")->row()->c1;
+	}
+}
